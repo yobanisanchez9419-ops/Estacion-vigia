@@ -1,0 +1,349 @@
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* Estructura para eventos de alerta */
+typedef struct nodo_evento {
+    int id;
+    char tipo_sensor[20];
+    float valor;
+    struct nodo_evento *sig;
+} nodo_evento;
+
+/* Estructura unificada para comandos (Cola y Pila) */
+typedef struct nodo_cmd {
+    int id;
+    char descripcion[30];
+    struct nodo_cmd *sig;
+} nodo_cmd;
+
+/* Estructura para calibración */
+typedef struct {
+    int codigo;
+    float factor;
+} calibracion;
+
+/* Variables globales */
+float *buf_lecturas = NULL;
+int cant_lecturas = 0, cap_lecturas = 5;
+
+nodo_evento *cabeza_eventos = NULL;
+nodo_cmd *frente_cola = NULL, *final_cola = NULL, *tope_pila = NULL;
+
+/* Prototipos */
+int leer_entero(void);
+void capturar_lectura(void);
+void mostrar_lecturas_y_estadisticas(void);
+void agregar_evento(char *sensor, float valor);
+void mostrar_eventos(void);
+void buscar_evento_por_sensor(void);
+void eliminar_evento(void);
+void encolar_comando(void);
+void ejecutar_comando(void);
+void deshacer_comando(void);
+int contar_eventos_recursivo(nodo_evento *actual);
+void ordenar_lecturas_burbuja(void);
+void busqueda_binaria_calibracion(void);
+void generar_reporte_final(void);
+void liberar_memoria_total(void);
+
+int main(void) {
+    int opcion = -1;
+    int op_ev, op_cmd, op_ord; /* Variables movidas al inicio para estandar C89 */
+    
+    buf_lecturas = (float *)malloc(cap_lecturas * sizeof(float));
+    if (!buf_lecturas) return 1;
+
+    printf("Estacion Vigia iniciada.\n");
+
+    while (opcion != 0) {
+        printf("\n=== Estacion Vigia Alpha ===\n");
+        printf("1. Capturar lectura\n2. Lecturas y estadisticas\n3. Eventos de alerta\n");
+        printf("4. Comandos de actuador\n5. Deshacer ultimo comando\n6. Ordenamiento y busqueda\n");
+        printf("7. Reporte final\n0. Salir\nOpcion: ");
+        opcion = leer_entero();
+
+        switch (opcion) {
+            case 1: 
+                capturar_lectura(); 
+                break;
+            case 2: 
+                mostrar_lecturas_y_estadisticas(); 
+                break;
+            case 3: 
+                printf("\n1. Mostrar 2. Buscar 3. Eliminar\nOpcion: ");
+                op_ev = leer_entero();
+                if (op_ev == 1) mostrar_eventos();
+                else if (op_ev == 2) buscar_evento_por_sensor();
+                else if (op_ev == 3) eliminar_evento();
+                break;
+            case 4:
+                printf("\n1. Encolar 2. Ejecutar\nOpcion: ");
+                op_cmd = leer_entero();
+                if (op_cmd == 1) encolar_comando();
+                else if (op_cmd == 2) ejecutar_comando();
+                break;
+            case 5: 
+                deshacer_comando(); 
+                break;
+            case 6:
+                printf("\n1. Ordenar lecturas 2. Buscar calibracion\nOpcion: ");
+                op_ord = leer_entero();
+                if (op_ord == 1) ordenar_lecturas_burbuja();
+                else if (op_ord == 2) busqueda_binaria_calibracion();
+                break;
+            case 7: 
+                generar_reporte_final(); 
+                break;
+            case 0: 
+                liberar_memoria_total(); 
+                printf("Sistema finalizado.\n"); 
+                break;
+            default: 
+                printf("Opcion no valida.\n");
+        }
+    }
+    return 0;
+}
+
+/* Helper para leer enteros sin ensuciar el buffer */
+int leer_entero(void) {
+    int val;
+    while (scanf("%d", &val) != 1) {
+        while (getchar() != '\n'); 
+        printf("Dato invalido. Intente de nuevo: ");
+    }
+    return val;
+}
+
+void capturar_lectura(void) {
+    char sensor[20];
+    float valor;
+    
+    printf("\nTipo de sensor (temperatura, presion, nivel): ");
+    scanf("%19s", sensor);
+    printf("Valor registrado: ");
+    while (scanf("%f", &valor) != 1) { 
+        while(getchar() != '\n'); 
+        printf("Valor incorrecto: "); 
+    }
+
+    if (cant_lecturas >= cap_lecturas) {
+        cap_lecturas *= 2;
+        buf_lecturas = (float *)realloc(buf_lecturas, cap_lecturas * sizeof(float));
+    }
+    buf_lecturas[cant_lecturas++] = valor;
+    printf("Lectura guardada.\n");
+
+    if ((strcmp(sensor, "temperatura") == 0 && valor > 40.0) ||
+        (strcmp(sensor, "presion") == 0 && valor > 100.0) || valor > 80.0) {
+        printf("Alerta: Limite superado para %s.\n", sensor);
+        agregar_evento(sensor, valor);
+    }
+}
+
+void mostrar_lecturas_y_estadisticas(void) {
+    int i; /* Declarado fuera del for */
+    float suma = 0, max, min;
+    
+    if (!cant_lecturas) { printf("No hay lecturas.\n"); return; }
+    
+    max = buf_lecturas[0];
+    min = buf_lecturas[0];
+    
+    printf("\n--- Lecturas ---\n");
+    for (i = 0; i < cant_lecturas; i++) {
+        printf("Lectura %d: %.2f\n", i + 1, buf_lecturas[i]);
+        suma += buf_lecturas[i];
+        if (buf_lecturas[i] > max) max = buf_lecturas[i];
+        if (buf_lecturas[i] < min) min = buf_lecturas[i];
+    }
+    printf("\nPromedio: %.2f | Max: %.2f | Min: %.2f\n", suma / cant_lecturas, max, min);
+}
+
+void agregar_evento(char *sensor, float valor) {
+    static int id_contador = 1;
+    nodo_evento *p;
+    nodo_evento *nuevo = (nodo_evento *)malloc(sizeof(nodo_evento));
+    
+    nuevo->id = id_contador++;
+    strncpy(nuevo->tipo_sensor, sensor, 19);
+    nuevo->valor = valor;
+    nuevo->sig = NULL;
+
+    if (!cabeza_eventos) {
+        cabeza_eventos = nuevo;
+    } else {
+        p = cabeza_eventos;
+        while (p->sig) p = p->sig;
+        p->sig = nuevo;
+    }
+}
+
+void mostrar_eventos(void) {
+    nodo_evento *p;
+    if (!cabeza_eventos) { printf("No hay eventos.\n"); return; }
+    
+    for (p = cabeza_eventos; p != NULL; p = p->sig) {
+        printf("ID: %d | Sensor: %s | Valor: %.2f\n", p->id, p->tipo_sensor, p->valor);
+    }
+}
+
+void buscar_evento_por_sensor(void) {
+    char busqueda[20];
+    int encontrados = 0;
+    nodo_evento *p; 
+    
+    printf("Nombre del sensor: ");
+    scanf("%19s", busqueda);
+
+    for (p = cabeza_eventos; p != NULL; p = p->sig) {
+        if (strcmp(p->tipo_sensor, busqueda) == 0) {
+            printf("ID: %d | Sensor: %s | Valor: %.2f\n", p->id, p->tipo_sensor, p->valor);
+            encontrados++;
+        }
+    }
+    if (!encontrados) printf("Sin coincidencias.\n");
+}
+
+void eliminar_evento(void) {
+    int id_eliminar;
+    nodo_evento *actual = cabeza_eventos, *anterior = NULL;
+    
+    printf("ID del evento: ");
+    id_eliminar = leer_entero();
+    
+    while (actual && actual->id != id_eliminar) {
+        anterior = actual;
+        actual = actual->sig;
+    }
+    
+    if (!actual) { printf("Evento no encontrado.\n"); return; }
+
+    if (!anterior) cabeza_eventos = actual->sig;
+    else anterior->sig = actual->sig;
+    
+    free(actual);
+    printf("Evento eliminado.\n");
+}
+
+void encolar_comando(void) {
+    static int id_comando = 100;
+    nodo_cmd *nuevo = (nodo_cmd *)malloc(sizeof(nodo_cmd));
+    nuevo->id = id_comando++;
+    nuevo->sig = NULL;
+    
+    printf("Comando: ");
+    scanf("%29s", nuevo->descripcion);
+
+    if (!final_cola) {
+        frente_cola = final_cola = nuevo;
+    } else { 
+        final_cola->sig = nuevo; 
+        final_cola = nuevo; 
+    }
+    printf("Comando encolado.\n");
+}
+
+void ejecutar_comando(void) {
+    nodo_cmd *atender;
+    if (!frente_cola) { printf("Cola vacia.\n"); return; }
+    
+    atender = frente_cola;
+    frente_cola = frente_cola->sig;
+    if (!frente_cola) final_cola = NULL;
+
+    printf("Ejecutando #%d: %s\n", atender->id, atender->descripcion);
+    
+    /* Apilar para deshacer */
+    atender->sig = tope_pila;
+    tope_pila = atender;
+}
+
+void deshacer_comando(void) {
+    nodo_cmd *deshacer;
+    if (!tope_pila) { printf("Historial vacio.\n"); return; }
+    
+    deshacer = tope_pila;
+    tope_pila = tope_pila->sig;
+    printf("Deshaciendo #%d: %s\n", deshacer->id, deshacer->descripcion);
+    free(deshacer);
+}
+
+int contar_eventos_recursivo(nodo_evento *actual) {
+    if (!actual) return 0;
+    return 1 + contar_eventos_recursivo(actual->sig);
+}
+
+void ordenar_lecturas_burbuja(void) {
+    int i, j;
+    float temp;
+    
+    for (i = 0; i < cant_lecturas - 1; i++) {
+        for (j = 0; j < cant_lecturas - i - 1; j++) {
+            if (buf_lecturas[j] > buf_lecturas[j + 1]) {
+                temp = buf_lecturas[j];
+                buf_lecturas[j] = buf_lecturas[j + 1];
+                buf_lecturas[j + 1] = temp;
+            }
+        }
+    }
+    printf("Lecturas ordenadas.\n");
+}
+
+void busqueda_binaria_calibracion(void) {
+    calibracion tabla[] = { {101, 1.05}, {102, 1.10}, {103, 1.15}, {104, 1.20}, {105, 1.25} };
+    int codigo, izq = 0, der = 4, medio;
+    
+    printf("Codigo (101-105): ");
+    codigo = leer_entero();
+
+    while (izq <= der) {
+        medio = izq + (der - izq) / 2;
+        if (tabla[medio].codigo == codigo) {
+            printf("Factor: %.2f\n", tabla[medio].factor);
+            return;
+        }
+        if (tabla[medio].codigo < codigo) izq = medio + 1;
+        else der = medio - 1;
+    }
+    printf("Codigo no encontrado.\n");
+}
+
+void generar_reporte_final(void) {
+    int comandos = 0;
+    nodo_cmd *p;
+    
+    for (p = tope_pila; p != NULL; p = p->sig) comandos++;
+    
+    printf("\n=== Reporte ===\n");
+    printf("Lecturas: %d/%d\n", cant_lecturas, cap_lecturas);
+    printf("Alertas: %d\n", contar_eventos_recursivo(cabeza_eventos));
+    printf("Comandos en historial: %d\n", comandos);
+}
+
+void liberar_memoria_total(void) {
+    nodo_evento *t_ev;
+    nodo_cmd *t_cmd;
+    
+    if (buf_lecturas) free(buf_lecturas);
+    
+    while (cabeza_eventos) { 
+        t_ev = cabeza_eventos; 
+        cabeza_eventos = t_ev->sig; 
+        free(t_ev); 
+    }
+    
+    while (frente_cola) { 
+        t_cmd = frente_cola; 
+        frente_cola = t_cmd->sig; 
+        free(t_cmd); 
+    }
+    
+    while (tope_pila) { 
+        t_cmd = tope_pila; 
+        tope_pila = t_cmd->sig; 
+        free(t_cmd); 
+    }
+}
